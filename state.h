@@ -3,10 +3,31 @@
 #include <vector>
 #include <iostream>
 #include <cstdlib>
+#include <cmath>
 
 using namespace std;
 
 struct State {
+    // When sampling from screen/window captures, `fromPixels()` uses hardcoded
+    // screen-space coordinates (x,y). These thread-local parameters allow callers
+    // to map those coordinates into the coordinate system of the provided pixel
+    // buffer (e.g., a window-only screenshot).
+    static inline thread_local double captureOffsetX = 0.0;
+    static inline thread_local double captureOffsetY = 0.0;
+    static inline thread_local double captureScaleX = 1.0;
+    static inline thread_local double captureScaleY = 1.0;
+
+    static inline void setCaptureTransform(double offsetX, double offsetY, double scaleX, double scaleY) {
+        captureOffsetX = offsetX;
+        captureOffsetY = offsetY;
+        captureScaleX = scaleX;
+        captureScaleY = scaleY;
+    }
+
+    static inline void resetCaptureTransform() {
+        setCaptureTransform(0.0, 0.0, 1.0, 1.0);
+    }
+
     int totals[4];
     int numCards[4];
     bool soft[4];
@@ -611,7 +632,16 @@ struct State {
     }
 
     void getRGB(uint8 * pixels, int width, int height, int bpp, int x, int y, uint8 &r, uint8 &g, uint8 &b){
-        uint8 * p = pixels + (y * width + x) * bpp;
+        // Map screen-space coords (x,y) into the provided pixel buffer.
+        const int px = (int)llround((x - captureOffsetX) * captureScaleX);
+        const int py = (int)llround((y - captureOffsetY) * captureScaleY);
+
+        if (px < 0 || py < 0 || px >= width || py >= height || bpp <= 0) {
+            r = g = b = 0;
+            return;
+        }
+
+        uint8 * p = pixels + (py * width + px) * bpp;
         r = (uint8)(p[2]);
         g = (uint8)(p[1]);
         b = (uint8)(p[0]);
