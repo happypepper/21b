@@ -13,6 +13,7 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <ImageIO/ImageIO.h>
 #include <CoreServices/CoreServices.h>
+#include <cstdint>
 #include "state.h"
 #include "overlay.h"
 
@@ -215,6 +216,149 @@ static bool writeCGImageToPNG(CGImageRef image, const std::string &path) {
     const bool ok = CGImageDestinationFinalize(dest);
     CFRelease(dest);
     return ok;
+}
+
+static bool loadImageFileToBGRA(const std::string &path, std::vector<uint8_t> &outPixels, int &outWidth, int &outHeight) {
+    outPixels.clear();
+    outWidth = 0;
+    outHeight = 0;
+
+    CFStringRef cfPath = CFStringCreateWithCString(kCFAllocatorDefault, path.c_str(), kCFStringEncodingUTF8);
+    if (cfPath == nullptr) return false;
+    CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, cfPath, kCFURLPOSIXPathStyle, false);
+    CFRelease(cfPath);
+    if (url == nullptr) return false;
+
+    CGImageSourceRef source = CGImageSourceCreateWithURL(url, nullptr);
+    CFRelease(url);
+    if (source == nullptr) return false;
+
+    CGImageRef image = CGImageSourceCreateImageAtIndex(source, 0, nullptr);
+    CFRelease(source);
+    if (image == nullptr) return false;
+
+    const size_t w = CGImageGetWidth(image);
+    const size_t h = CGImageGetHeight(image);
+    if (w == 0 || h == 0) {
+        CGImageRelease(image);
+        return false;
+    }
+
+    const size_t bytesPerRow = w * 4;
+    outPixels.resize(bytesPerRow * h);
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (colorSpace == nullptr) {
+        CGImageRelease(image);
+        return false;
+    }
+
+    const CGBitmapInfo bitmapInfo = (CGBitmapInfo)(kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGContextRef ctx = CGBitmapContextCreate(
+        outPixels.data(),
+        w,
+        h,
+        8,
+        bytesPerRow,
+        colorSpace,
+        bitmapInfo
+    );
+    CGColorSpaceRelease(colorSpace);
+    if (ctx == nullptr) {
+        CGImageRelease(image);
+        outPixels.clear();
+        return false;
+    }
+
+    // Keep CoreGraphics' default coordinate system (origin at bottom-left).
+    // State::fromPixels()/getRGB() use Quartz-style coordinates (y measured from bottom).
+    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), image);
+
+    CGContextRelease(ctx);
+    CGImageRelease(image);
+
+    outWidth = (int)w;
+    outHeight = (int)h;
+    return true;
+}
+
+static int fromPixelsTest(const std::string &inputPath) {
+    std::vector<uint8_t> pixels;
+    int width = 0;
+    int height = 0;
+    if (!loadImageFileToBGRA(inputPath, pixels, width, height)) {
+        cerr << "Failed to load image: " << inputPath << "\n";
+        return 10;
+    }
+    cout << "Loaded test image: " << inputPath << " (" << width << "x" << height << ")\n";
+
+    // `fromPixels()` uses hardcoded *screen-space pixel coordinates*.
+    // If the test image is a window-only screenshot, we need a transform that
+    // maps screen-space into this buffer.
+    {
+        WindowMatchInfo match = findWindowMatchByNameContains("Reflector 4");
+        if (match.windowId == 0) match = findWindowMatchByNameContains("Reflector");
+
+        if (match.windowId != 0) {
+            CGRect winBounds;
+            if (getWindowBounds(match.windowId, winBounds)) {
+                const CGRect mainBoundsPts = CGDisplayBounds(CGMainDisplayID());
+                const double mainHeightPts = mainBoundsPts.size.height;
+                const double mainWidthPts = mainBoundsPts.size.width;
+                const double mainHeightPx = (double)CGDisplayPixelsHigh(CGMainDisplayID());
+                const double mainWidthPx = (double)CGDisplayPixelsWide(CGMainDisplayID());
+
+                const double displayScaleX = (mainWidthPts > 0.0) ? (mainWidthPx / mainWidthPts) : 1.0;
+                const double displayScaleY = (mainHeightPts > 0.0) ? (mainHeightPx / mainHeightPts) : 1.0;
+
+                const double winOriginXPx = winBounds.origin.x * displayScaleX;
+                const double winOriginYPx = winBounds.origin.y * displayScaleY;
+                const double winWidthPx = winBounds.size.width * displayScaleX;
+                const double winHeightPx = winBounds.size.height * displayScaleY;
+
+                // Convert to a top-left screen origin (pixels), matching the window image buffer.
+                const double windowTopInScreenPx = mainHeightPx - (winOriginYPx + winHeightPx);
+
+                const double windowImageScaleX = (winWidthPx > 0.0) ? ((double)width / winWidthPx) : 1.0;
+                const double windowImageScaleY = (winHeightPx > 0.0) ? ((double)height / winHeightPx) : 1.0;
+
+                State::setCaptureTransform(winOriginXPx, windowTopInScreenPx, windowImageScaleX, windowImageScaleY);
+                cout << "Using capture transform from live Reflector window: offsetX=" << winOriginXPx
+                     << " offsetY=" << windowTopInScreenPx
+                     << " scaleX=" << windowImageScaleX
+                     << " scaleY=" << windowImageScaleY << "\n";
+            } else {
+                State::resetCaptureTransform();
+                cout << "Reflector found but bounds unavailable; using identity capture transform.\n";
+            }
+        } else {
+            State::resetCaptureTransform();
+            cout << "Reflector not found; using identity capture transform.\n";
+        }
+    }
+
+    State base;
+
+    State *detected = base.fromPixels(pixels.data(), width, height, 4, -1);
+    if (detected == NULL) {
+        cerr << "fromPixels returned NULL (no card detected).\n";
+        if (width < 1800 || height < 1000) {
+            cerr << "Note: test image looks window-sized. If Reflector isn't running (or bounds differ from when the image was captured), auto-transform may be wrong.\n";
+        }
+        return 12;
+    }
+
+    cout << "Detected curCard=" << detected->curCard << " curRank=" << detected->curRank << " curSuit=" << detected->curSuit << "\n";
+    const int expectedCard = 8;
+    if (detected->curCard != expectedCard) {
+        cerr << "Expected curCard=" << expectedCard << " but got " << detected->curCard << "\n";
+        delete detected;
+        return 13;
+    }
+
+    delete detected;
+    cout << "fromPixels test passed.\n";
+    return 0;
 }
 
 static int screenshotTest(const std::string &outputPath) {
@@ -766,6 +910,11 @@ int main(int argc, char **argv) {
     if (argc >= 2 && string(argv[1]) == "--screenshot-test") {
         string out = (argc >= 3) ? string(argv[2]) : string("reflector.png");
         return screenshotTest(out);
+    }
+
+    if (argc >= 2 && string(argv[1]) == "--frompixels-test") {
+        string in = (argc >= 3) ? string(argv[2]) : string("test1.png");
+        return fromPixelsTest(in);
     }
 
     //test3();

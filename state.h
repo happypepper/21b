@@ -632,6 +632,14 @@ struct State {
     }
 
     void getRGB(uint8 * pixels, int width, int height, int bpp, int x, int y, uint8 &r, uint8 &g, uint8 &b){
+
+        int refWidth = 714;
+        int refHeight = 1056;
+        double xpct = (double)x / (double)refWidth;
+        double ypct = (double)y / (double)refHeight;
+        x = (int)llround(xpct * (double)width);
+        y = (int)llround(ypct * (double)height);
+
         // Map screen-space coords (x,y) into the provided pixel buffer.
         const int px = (int)llround((x - captureOffsetX) * captureScaleX);
         const int py = (int)llround((y - captureOffsetY) * captureScaleY);
@@ -649,11 +657,13 @@ struct State {
 
 
     State * fromPixels(uint8 *pixels, int width, int height, int bpp, int prevCard){
-        int cardExistx1 = 1667;
-        int cardExisty = 911;
-        int cardExistx2 = 1740;
+
+        int cardExistx1 = 401;
+        int cardExisty = 793;
+        int cardExistx2 = 482;
 
         uint8 r,g,b;
+
         getRGB(pixels, width, height, bpp, cardExistx1, cardExisty, r, g, b);
         if (r < 220 || g < 220 || b < 220){
             return NULL;
@@ -663,29 +673,37 @@ struct State {
             return NULL;
         }
 
+        // detect dark around the card 
+        int cardNotExistx = 385;
+
+        getRGB(pixels, width, height, bpp, cardNotExistx, cardExisty, r, g, b);
+        if (r > 200 && g > 200 && b > 200){
+            return NULL;
+        }
+
         int suit = -1;
 
-        int suitx1 = 1663;
-        int suity1 = 855;
+        int suitx1 = 460;
+        int suity1 = 744;
         getRGB(pixels, width, height, bpp, suitx1, suity1, r, g, b);
 
-        bool leftRed = r > 140 && r < 200 && g < 60 && b > 50 && b < 110;
+        bool leftRed = r > 180 && g < 60 && b < 50;
 
-        int suitx2 = 1677;
-        int suity2 = 855;
+        int suitx2 = 477;
+        int suity2 = 744;
         getRGB(pixels, width, height, bpp, suitx2, suity2, r, g, b);
 
-        bool rightRed = r > 140 && r < 200 && g < 60 && b > 50 && b < 110;
+        bool rightRed = r > 180 && g < 60 && b < 50;
 
         if (rightRed){
             suit = 0; // heart
         }
 
-        int suitx3 = 1670;
-        int suity3 = 862;
+        int suitx3 = 468;
+        int suity3 = 742;
         getRGB(pixels, width, height, bpp, suitx3, suity3, r, g, b);
 
-        if (r > 140 && r < 200 && g < 60 && b > 50 && b < 110){
+        if (r > 180 && g < 60 && b < 60){
             if (suit == -1){
                 suit = 1; // diamond
             }
@@ -693,14 +711,14 @@ struct State {
         bool leftBlack = false;
         bool rightBlack = false;
         if (r < 95 && g < 95 && b < 95){
-            int suitx4 = 1668;
-            int suity4 = 854;
+            int suitx4 = 463;
+            int suity4 = 742;
             getRGB(pixels, width, height, bpp, suitx4, suity4, r, g, b);
 
             bool leftBlack = r < 105 && g < 105 && b < 105;
 
-            int suitx5 = 1674;
-            int suity5 = 854;
+            int suitx5 = 472;
+            int suity5 = 742;
             getRGB(pixels, width, height, bpp, suitx5, suity5, r, g, b);
 
             bool rightBlack = r < 105 && g < 105 && b < 105;
@@ -708,6 +726,7 @@ struct State {
             suit = leftBlack && rightBlack ? 2 : 3; // club or spade
             if (leftBlack != rightBlack) suit = -1;
         }
+        cout << suit << endl;
 
         int rank = -1;
 
@@ -716,10 +735,10 @@ struct State {
             {1686,1699,1719,1699,1684,1722}, // 2
             {1685,1700,1718,1707,1693,1717,1683,1701}, // 3
             {1710,1714,1714,1728,1680,1692}, // 4
-            {1689,1705,1718,1689,1690,1703,1716,1718,1703,1686}, // 5
+            {426,457,442,428,428,442}, // 5
             {1719,1708,1688,1686,1691,1706,1719,1706,1688}, // 6
             {1685,1697,1720,1710,1702,1695,1705}, // 7
-            {1687,1702,1718,1702,1718,1686,1719,1703}, // 8
+            {442}, // 8
             {1701,1685,1717,1687,1703,1719,1718,1705,1688}, // 9
             {1672,1684,1684,1735}, // 10
             {1705,1705,1705,1695,1686}, // J
@@ -732,10 +751,10 @@ struct State {
             {881,878,891,908,927,929}, // 2
             {879,877,888,902,902,926,926,928}, // 3
             {878,915,929,915,914,894}, // 4
-            {878,878,878,890,902,901,904,921,929,926}, // 5
+            {784,784,784,797,809,835}, // 5
             {879,876,883,906,925,928,916,900,914}, // 6
             {878,878,878,901,915,929}, // 7
-            {888,877,888,902,897,917,917,930}, // 8
+            {785}, // 8
             {877,891,891,902,905,903,917,929,927}, // 9
             {887,884,923,903}, // 10
             {894,910,932,936,936}, // J
@@ -748,10 +767,10 @@ struct State {
             {1698,1687}, // 2
             {1699,1698,1680,1680}, // 3
             {1701}, // 4
-            {1688,1700,1705,1720}, // 5
+            {459,443,424}, // 5
             {1703,1720,1705}, // 6
             {1685,1694,1684,1722}, // 7
-            {1703,1703}, // 8
+            {441}, // 8
             {1699,1688,1702}, // 9
             {1717,1717,1717}, // 10
             {1683,1683,1690,1719}, // J
@@ -764,10 +783,10 @@ struct State {
             {892,901}, // 2
             {915,889,892,912}, // 3
             {904}, // 4
-            {914,916,890,891}, // 5
+            {796,796,819}, // 5
             {914,890,889}, // 6
             {912,895,895,929}, // 7
-            {917,889}, // 8
+            {796}, // 8
             {918,916,892}, // 9
             {893,904,913}, // 10
             {917,904,901,907}, // J
@@ -789,7 +808,7 @@ struct State {
 
                 } else if (r > 70 && r < 110 && g < 40 && b > 90 && b < 120){ // purple
                     
-                } else if (r > 140 && r < 200 && g < 60 && b > 50 && b < 110){ // red
+                } else if (r > 140 && g < 60 && b < 80){ // red
 
                 } else if (r > 130 && r < 180 && g < 50 && b > 10 && b < 80){ // red
                     
@@ -811,7 +830,7 @@ struct State {
             if (!good[i]) continue;
             for(int j = 0; j < emptyx[i].size(); j++){
                 getRGB(pixels, width, height, bpp, emptyx[i][j], emptyy[i][j], r, g, b);
-                if (r > 220 && g > 220 && b > 220){ // white
+                if (r > 180 && g > 180 && b > 180){ // white
 
                 } else {
                     good[i] = false;
