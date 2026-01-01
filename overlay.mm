@@ -176,9 +176,12 @@ extern "C" void overlay_step(double seconds) {
 
 // ===== Back-compat single-text API maps to @"__default__" =====
 extern "C" void overlay_set_text_utf8(const char* utf8) {
+    // IMPORTANT: callers may pass pointers that are only valid for the duration
+    // of this call (e.g. std::to_string(...).c_str()). Copy into an NSString
+    // before dispatching to the main queue.
+    NSString *s = utf8 ? [NSString stringWithUTF8String:utf8] : @"";
     dispatch_async(dispatch_get_main_queue(), ^{
         NSString *key = kDefaultKey;
-        NSString *s = utf8 ? [NSString stringWithUTF8String:utf8] : @"";
         OverlayLabel *L = gLabels[key] ?: [OverlayLabel new];
         L.attributed = MakeAttr(s, gDefaultSize, gDefaultColor);
         if (!gLabels[key]) { L.origin = (NSPoint){NAN, NAN}; }
@@ -228,10 +231,11 @@ extern "C" void overlay_set_text_position(double x, double y) {
 extern "C" void overlay_label_set(const char* keyC, const char* utf8,
                                   double x, double y, double points,
                                   double r, double g, double b, double a) {
+    // Copy inputs before dispatching (callers may pass temporary pointers).
+    if (!keyC) return;
+    NSString *key = [NSString stringWithUTF8String:keyC];
+    NSString *s = utf8 ? [NSString stringWithUTF8String:utf8] : @"";
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!keyC) return;
-        NSString *key = [NSString stringWithUTF8String:keyC];
-        NSString *s = utf8 ? [NSString stringWithUTF8String:utf8] : @"";
         CGFloat R = (CGFloat)fmin(fmax(r,0),1);
         CGFloat G = (CGFloat)fmin(fmax(g,0),1);
         CGFloat B = (CGFloat)fmin(fmax(b,0),1);
@@ -247,9 +251,10 @@ extern "C" void overlay_label_set(const char* keyC, const char* utf8,
 }
 
 extern "C" void overlay_label_remove(const char* keyC) {
+    // Copy key before dispatching (callers may pass temporary pointers).
+    if (!keyC) return;
+    NSString *key = [NSString stringWithUTF8String:keyC];
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!keyC) return;
-        NSString *key = [NSString stringWithUTF8String:keyC];
         [gLabels removeObjectForKey:key];
         ApplyLabelsToAllWindows();
     });
@@ -268,10 +273,11 @@ extern "C" void overlay_rect_set(const char* keyC,
                                   double strokeWidth,
                                   double strokeR, double strokeG, double strokeB, double strokeA,
                                   double fillR, double fillG, double fillB, double fillA) {
+    // Copy key before dispatching (callers may pass temporary pointers).
+    if (!keyC) return;
+    NSString *key = [NSString stringWithUTF8String:keyC];
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!keyC) return;
         if (!gRects) gRects = [NSMutableDictionary dictionary];
-        NSString *key = [NSString stringWithUTF8String:keyC];
         OverlayRect *R = gRects[key] ?: [OverlayRect new];
 
         double normW = width;
@@ -322,9 +328,10 @@ extern "C" void overlay_rect_set(const char* keyC,
 }
 
 extern "C" void overlay_rect_remove(const char* keyC) {
+    // Copy key before dispatching (callers may pass temporary pointers).
+    if (!keyC) return;
+    NSString *key = [NSString stringWithUTF8String:keyC];
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!keyC) return;
-        NSString *key = [NSString stringWithUTF8String:keyC];
         [gRects removeObjectForKey:key];
         ApplyLabelsToAllWindows();
     });

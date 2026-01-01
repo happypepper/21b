@@ -21,6 +21,21 @@
 
 using namespace std;
 
+struct WindowMatchInfo {
+    CGWindowID windowId = 0;
+    std::string needle;
+    std::string ownerName;
+    std::string windowName;
+    int ownerPid = -1;
+    int layer = 0;
+    double alpha = 1.0;
+    bool onScreen = false;
+    CGRect bounds = CGRectNull;
+};
+
+// Forward declaration (used by window-id lookup helpers).
+static WindowMatchInfo findWindowMatchByNameContains(const std::string &needle);
+
 static bool cfStringToStdString(CFStringRef s, std::string &out) {
     if (s == nullptr) return false;
     const CFIndex length = CFStringGetLength(s);
@@ -45,48 +60,11 @@ static bool stringContainsCaseInsensitive(const std::string &haystack, const std
 }
 
 static CGWindowID findWindowIdByNameContains(const std::string &needle) {
-    CGWindowID found = 0;
-    CFArrayRef windowInfo = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
-    if (windowInfo == nullptr) return 0;
-
-    const CFIndex count = CFArrayGetCount(windowInfo);
-    for (CFIndex i = 0; i < count; i++) {
-        CFDictionaryRef dict = (CFDictionaryRef)CFArrayGetValueAtIndex(windowInfo, i);
-        if (dict == nullptr) continue;
-
-        CFNumberRef windowNumber = (CFNumberRef)CFDictionaryGetValue(dict, kCGWindowNumber);
-        int64_t windowId64 = 0;
-        if (windowNumber == nullptr || !CFNumberGetValue(windowNumber, kCFNumberSInt64Type, &windowId64)) {
-            continue;
-        }
-
-        std::string ownerName;
-        std::string windowName;
-        cfStringToStdString((CFStringRef)CFDictionaryGetValue(dict, kCGWindowOwnerName), ownerName);
-        cfStringToStdString((CFStringRef)CFDictionaryGetValue(dict, kCGWindowName), windowName);
-
-        // Reflector windows often have the app name as owner, and the title varies.
-        if (stringContainsCaseInsensitive(ownerName, needle) || stringContainsCaseInsensitive(windowName, needle)) {
-            found = (CGWindowID)windowId64;
-            break;
-        }
-    }
-
-    CFRelease(windowInfo);
-    return found;
+    // IMPORTANT: apps often have multiple windows (tooltips, tiny helpers, etc.).
+    // Always pick the *best* match (usually the largest on-screen window).
+    WindowMatchInfo match = findWindowMatchByNameContains(needle);
+    return match.windowId;
 }
-
-struct WindowMatchInfo {
-    CGWindowID windowId = 0;
-    std::string needle;
-    std::string ownerName;
-    std::string windowName;
-    int ownerPid = -1;
-    int layer = 0;
-    double alpha = 1.0;
-    bool onScreen = false;
-    CGRect bounds = CGRectNull;
-};
 
 static WindowMatchInfo findWindowMatchByNameContains(const std::string &needle) {
     WindowMatchInfo info;
@@ -97,11 +75,20 @@ static WindowMatchInfo findWindowMatchByNameContains(const std::string &needle) 
 
     const CFIndex count = CFArrayGetCount(windowInfo);
 
-    // Prefer the largest matching, on-screen window. This avoids small helper/icon windows.
+    // Prefer the largest *reasonable* matching, on-screen window.
+    // Apps often create tiny helper windows (e.g., 38x24) that would otherwise "win" if we
+    // return the first match.
+    constexpr double kMinReasonableWidthPts = 200.0;
+    constexpr double kMinReasonableHeightPts = 200.0;
+
     double bestAreaOnScreen = -1.0;
     double bestAreaAny = -1.0;
+    double bestAreaReasonableOnScreen = -1.0;
+    double bestAreaReasonableAny = -1.0;
     WindowMatchInfo bestOnScreen;
     WindowMatchInfo bestAny;
+    WindowMatchInfo bestReasonableOnScreen;
+    WindowMatchInfo bestReasonableAny;
 
     for (CFIndex i = 0; i < count; i++) {
         CFDictionaryRef dict = (CFDictionaryRef)CFArrayGetValueAtIndex(windowInfo, i);
@@ -154,19 +141,30 @@ static WindowMatchInfo findWindowMatchByNameContains(const std::string &needle) 
         candidate.bounds = bounds;
 
         const double area = bounds.size.width * bounds.size.height;
+        const bool isReasonable = (!CGRectIsNull(bounds) && bounds.size.width >= kMinReasonableWidthPts && bounds.size.height >= kMinReasonableHeightPts);
         if (area > bestAreaAny) {
             bestAreaAny = area;
             bestAny = candidate;
+        }
+        if (isReasonable && area > bestAreaReasonableAny) {
+            bestAreaReasonableAny = area;
+            bestReasonableAny = candidate;
         }
         if (candidate.onScreen && candidate.alpha > 0.01 && area > bestAreaOnScreen) {
             bestAreaOnScreen = area;
             bestOnScreen = candidate;
         }
+        if (isReasonable && candidate.onScreen && candidate.alpha > 0.01 && area > bestAreaReasonableOnScreen) {
+            bestAreaReasonableOnScreen = area;
+            bestReasonableOnScreen = candidate;
+        }
     }
 
     CFRelease(windowInfo);
 
+    if (bestAreaReasonableOnScreen > 0) return bestReasonableOnScreen;
     if (bestAreaOnScreen > 0) return bestOnScreen;
+    if (bestAreaReasonableAny > 0) return bestReasonableAny;
     if (bestAreaAny > 0) return bestAny;
     return info;
 }
@@ -276,6 +274,50 @@ static bool loadImageFileToBGRA(const std::string &path, std::vector<uint8_t> &o
 
     CGContextRelease(ctx);
     CGImageRelease(image);
+
+    outWidth = (int)w;
+    outHeight = (int)h;
+    return true;
+}
+
+static bool copyCGImageToBGRA(CGImageRef image, std::vector<uint8_t> &outPixels, int &outWidth, int &outHeight) {
+    outPixels.clear();
+    outWidth = 0;
+    outHeight = 0;
+    if (image == nullptr) return false;
+
+    const size_t w = CGImageGetWidth(image);
+    const size_t h = CGImageGetHeight(image);
+    if (w == 0 || h == 0) return false;
+
+    const size_t bytesPerRow = w * 4;
+    outPixels.resize(bytesPerRow * h);
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (colorSpace == nullptr) {
+        outPixels.clear();
+        return false;
+    }
+
+    const CGBitmapInfo bitmapInfo = (CGBitmapInfo)(kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGContextRef ctx = CGBitmapContextCreate(
+        outPixels.data(),
+        w,
+        h,
+        8,
+        bytesPerRow,
+        colorSpace,
+        bitmapInfo
+    );
+    CGColorSpaceRelease(colorSpace);
+    if (ctx == nullptr) {
+        outPixels.clear();
+        return false;
+    }
+
+    // Match the pixel layout produced by loadImageFileToBGRA().
+    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), image);
+    CGContextRelease(ctx);
 
     outWidth = (int)w;
     outHeight = (int)h;
@@ -639,12 +681,17 @@ Node* MCTS(State * state, int iterations) {
     return root->getMostVisitedChild();
 }
 
+int windowX,windowY,windowW,windowH;
+
 State * sampleFromScreenshot(State * state, int prevCard){
     // Cache the window id so we don't scan the full window list every frame.
     // If Reflector restarts (window id changes), we'll re-discover on failure.
     static CGWindowID reflectorWindowId = 0;
     const std::string target = "Reflector 4";
     while(true){
+
+            overlay_step(0.001);
+            overlay_redraw();
         if (reflectorWindowId == 0) {
             reflectorWindowId = findWindowIdByNameContains(target);
             // Fallback: sometimes the owner/title just contains "Reflector".
@@ -664,6 +711,21 @@ State * sampleFromScreenshot(State * state, int prevCard){
             continue;
         }
 
+        // If we latched onto a tiny helper window, drop it and re-discover.
+        if (!CGRectIsNull(winBounds) && (winBounds.size.width < 200.0 || winBounds.size.height < 200.0)) {
+            cerr << "Rejecting tiny Reflector match (points): w=" << winBounds.size.width
+                 << " h=" << winBounds.size.height << " (id=" << reflectorWindowId << ")\n";
+            reflectorWindowId = 0;
+            this_thread::sleep_for(chrono::milliseconds(250));
+            continue;
+        }
+        // set window vars
+        windowX = (int)winBounds.origin.x;
+        windowY = (int)winBounds.origin.y;
+        windowW = (int)winBounds.size.width;
+        windowH = (int)winBounds.size.height;
+        //cout << "(" << windowX << ", " << windowY << ", " << windowW << ", " << windowH << ")" << endl;
+
         CGImageRef img = captureWindowImage(reflectorWindowId);
         if (img == nullptr) {
             // Window likely went away; re-discover.
@@ -672,73 +734,39 @@ State * sampleFromScreenshot(State * state, int prevCard){
             continue;
         }
 
-        CGDataProviderRef provider = CGImageGetDataProvider(img);
-        if (provider == nullptr) {
+        std::vector<uint8_t> pixelsBGRA;
+        int width = 0;
+        int height = 0;
+        if (!copyCGImageToBGRA(img, pixelsBGRA, width, height)) {
             CGImageRelease(img);
             this_thread::sleep_for(chrono::milliseconds(250));
             continue;
         }
+        CGImageRelease(img);
+        const int bpp = 4;
 
-        CFDataRef data = CGDataProviderCopyData(provider);
-        if (data == nullptr) {
-            CGImageRelease(img);
-            this_thread::sleep_for(chrono::milliseconds(250));
-            continue;
-        }
+        // NOTE: captureWindowImage() returns a *window-only* buffer, and State::getRGB()
+        // already scales from a reference (714x1056) into (width,height).
+        // Applying a screen->window transform here would shift samples out of bounds.
+        State::resetCaptureTransform();
 
-        int width = (int)CGImageGetWidth(img);
-        int height = (int)CGImageGetHeight(img);
-        int bpp = (int)CGImageGetBitsPerPixel(img) / 8;
-
-        // Map the hardcoded screen pixel coordinates used inside State::fromPixels()
-        // into this window-only screenshot buffer.
-        const CGRect mainBoundsPts = CGDisplayBounds(CGMainDisplayID());
-        const double mainHeightPts = mainBoundsPts.size.height;
-        const double mainHeightPx = (double)CGDisplayPixelsHigh(CGMainDisplayID());
-        const double displayScaleY = (mainHeightPts > 0.0) ? (mainHeightPx / mainHeightPts) : 1.0;
-        const double displayScaleX = (mainBoundsPts.size.width > 0.0) ? ((double)CGDisplayPixelsWide(CGMainDisplayID()) / mainBoundsPts.size.width) : 1.0;
-
-        const double winOriginXPx = winBounds.origin.x * displayScaleX;
-        const double winOriginYPx = winBounds.origin.y * displayScaleY;
-        const double winWidthPx = winBounds.size.width * displayScaleX;
-        const double winHeightPx = winBounds.size.height * displayScaleY;
-
-        const double windowTopInScreenPx = mainHeightPx - (winOriginYPx + winHeightPx);
-        const double windowImageScaleX = (winWidthPx > 0.0) ? ((double)width / winWidthPx) : 1.0;
-        const double windowImageScaleY = (winHeightPx > 0.0) ? ((double)height / winHeightPx) : 1.0;
-
-        State::setCaptureTransform(winOriginXPx, windowTopInScreenPx, windowImageScaleX, windowImageScaleY);
-
-        unsigned char *pixels = (unsigned char *)CFDataGetBytePtr(data);
-
-        State * ret = state->fromPixels(pixels, width, height, bpp, prevCard);
-        this_thread::sleep_for(chrono::milliseconds(200));
-
+        State * ret = state->fromPixels((uint8 *)pixelsBGRA.data(), width, height, bpp, prevCard);
+        this_thread::sleep_for(chrono::milliseconds(100));
         CGImageRef img2 = captureWindowImage(reflectorWindowId);
         if (img2 == nullptr) {
-            CFRelease(data);
-            CGImageRelease(img);
             reflectorWindowId = 0;
             if (ret != NULL) delete ret;
             this_thread::sleep_for(chrono::milliseconds(250));
             continue;
         }
 
-        CGDataProviderRef provider2 = CGImageGetDataProvider(img2);
-        CFDataRef data2 = provider2 ? CGDataProviderCopyData(provider2) : nullptr;
-
+        std::vector<uint8_t> pixels2BGRA;
+        int width2 = 0;
+        int height2 = 0;
         State * ret2 = NULL;
-        if (data2 != nullptr) {
-            int width2 = (int)CGImageGetWidth(img2);
-            int height2 = (int)CGImageGetHeight(img2);
-            int bpp2 = (int)CGImageGetBitsPerPixel(img2) / 8;
-            unsigned char *pixels2 = (unsigned char *)CFDataGetBytePtr(data2);
-            ret2 = state->fromPixels(pixels2, width2, height2, bpp2, prevCard);
+        if (copyCGImageToBGRA(img2, pixels2BGRA, width2, height2)) {
+            ret2 = state->fromPixels((uint8 *)pixels2BGRA.data(), width2, height2, 4, prevCard);
         }
-
-        CFRelease(data);
-        CGImageRelease(img);
-        if (data2 != nullptr) CFRelease(data2);
         CGImageRelease(img2);
         if (ret == NULL){
             this_thread::sleep_for(chrono::milliseconds(100));
@@ -929,6 +957,8 @@ int main(int argc, char **argv) {
     overlay_set_text_color(1, 0, 0, 1);
     overlay_set_text_utf8("");
     overlay_set_text_position(40, 40);
+    overlay_step(0.001);
+    overlay_redraw();
     
     srand(time(NULL));
     long long hashcode = -1;
@@ -960,6 +990,7 @@ int main(int argc, char **argv) {
             } else {
                 cout << root->state->curMove << endl;
             }
+            root->state->showBestMove(windowX, windowY, windowW, windowH);
             overlay_step(0.001);
             overlay_redraw();
         }

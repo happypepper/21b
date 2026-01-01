@@ -4,6 +4,8 @@
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
+#include <utility>
+#include "overlay.h"
 
 using namespace std;
 
@@ -420,6 +422,18 @@ struct State {
         cerr << endl;
     }
 
+    void showBestMove(int windowX, int windowY, int windowW, int windowH) const {
+        if (justUndid){
+            overlay_set_text_position(windowX + windowW / 2, windowY + windowH / 2);
+            overlay_set_text_utf8("undo");
+        } else {
+            double posX = windowX + windowW * curMove / 5 + windowW / 8;
+            double posY = windowY + windowH / 2;
+            overlay_set_text_position(posX, posY);
+            overlay_set_text_utf8(to_string(curCard).c_str());
+        }
+    }
+
     long long hash_code() const { // Returns a hash code for the current state.
         long long result = 0;
         for(int i=0;i<4;i++){
@@ -726,80 +740,47 @@ struct State {
             suit = leftBlack && rightBlack ? 2 : 3; // club or spade
             if (leftBlack != rightBlack) suit = -1;
         }
-        cout << suit << endl;
 
         int rank = -1;
 
-        vector<vector<int>> filledx = {
-            {1702,1689,1715,1686,1701,1719,1682,1726}, // A
-            {1686,1699,1719,1699,1684,1722}, // 2
-            {1685,1700,1718,1707,1693,1717,1683,1701}, // 3
-            {1710,1714,1714,1728,1680,1692}, // 4
-            {426,457,442,428,428,442}, // 5
-            {1719,1708,1688,1686,1691,1706,1719,1706,1688}, // 6
-            {1685,1697,1720,1710,1702,1695,1705}, // 7
-            {442}, // 8
-            {1701,1685,1717,1687,1703,1719,1718,1705,1688}, // 9
-            {1672,1684,1684,1735}, // 10
-            {1705,1705,1705,1695,1686}, // J
-            {1686,1701,1720,1681,1724,1727}, // Q
-            {1685,1721,1687,1701,1686,1723}, // K
-            {1705,1705,1705,1695,1690} // J
+        vector<vector<pair<int, int>>> filled = {
+            {{440,786},{440,821},{419,834},{465,835}}, // A
+            {{441,785},{425,796},{454,796},{448,813},{443,833},{459,833}}, // 2
+            {{442,785},{441,809},{441,834},{425,833}}, // 3
+            {{450,786},{433,800},{420,821},{464,820},{452,835},{439,822}}, // 4
+            {{426,784},{457,784},{442,784},{428,797},{428,809},{442,835}}, // 5
+            {{442,785},{441,809},{441,834}, {431,809},{424,820}}, // 6
+            {{422,786},{441,786},{461,786},{451,800},{443,814},{439,835}}, // 7
+            {{442,785},{441,809},{441,834}, {431,809},{424,820},{460,799},{424,819}}, // 8
+            {{442,785},{441,809},{441,834}, {431,809},{459,796}}, // 9
+            {{410,794},{424,837}}, // 10
+            {{457,785},{441,834},{426,820}}, // J
+            {{464,845},{442,786}}, // Q
+            {{424,784},{457,785},{437,810},{424,834},{460,834}}, // K
+            {{457,785},{441,834},{426,820}} // J
         };
-        vector<vector<int>> filledy = {
-            {879,898,898,915,914,915,929,929}, // A
-            {881,878,891,908,927,929}, // 2
-            {879,877,888,902,902,926,926,928}, // 3
-            {878,915,929,915,914,894}, // 4
-            {784,784,784,797,809,835}, // 5
-            {879,876,883,906,925,928,916,900,914}, // 6
-            {878,878,878,901,915,929}, // 7
-            {785}, // 8
-            {877,891,891,902,905,903,917,929,927}, // 9
-            {887,884,923,903}, // 10
-            {894,910,932,936,936}, // J
-            {885,879,885,902,902,940}, // Q
-            {880,882,902,903,927,928}, // K
-            {894,910,932,932,930}, // J
-        };
-        vector<vector<int>> emptyx = {
-            {1703,1703}, // A
-            {1698,1687}, // 2
-            {1699,1698,1680,1680}, // 3
-            {1701}, // 4
-            {459,443,424}, // 5
-            {1703,1720,1705}, // 6
-            {1685,1694,1684,1722}, // 7
-            {441}, // 8
-            {1699,1688,1702}, // 9
-            {1717,1717,1717}, // 10
-            {1683,1683,1690,1719}, // J
-            {1703}, // Q
-            {1702,1722,1702}, // K
-            {1692,1692,1692}, // J
-        };
-        vector<vector<int>> emptyy = {
-            {928,902}, // A
-            {892,901}, // 2
-            {915,889,892,912}, // 3
-            {904}, // 4
-            {796,796,819}, // 5
-            {914,890,889}, // 6
-            {912,895,895,929}, // 7
-            {796}, // 8
-            {918,916,892}, // 9
-            {893,904,913}, // 10
-            {917,904,901,907}, // J
-            {903}, // Q
-            {880,904,930}, // K
-            {911,897,879}, // J
+        vector<vector<pair<int, int>>> empty = {
+            {{440,810},{440,834}}, // A
+            {{425,807},{459,820},{440,799}}, // 2
+            {{441,796},{441,822},{431,809}}, // 3
+            {{440,810}}, // 4
+            {{459,796},{443,796},{424,819}}, // 5
+            {{441,796},{441,822},{460,799}}, // 6
+            {{427,798},{426,824}}, // 7
+            {{441,796},{441,822}}, // 8
+            {{441,796},{441,822},{424,820}}, // 9
+            {{458,809}}, // 10
+            {{424,806},{425,786},{440,818}}, // J
+            {{441,809}}, // Q
+            {{410,794},{439,834},{439,784}}, // K
+            {{424,806},{425,786},{440,818}} // J
         };
         vector<int> ranks = {0,1,2,3,4,5,6,7,8,9,10,11,12,10};
-        vector<bool> good = vector<bool>(filledx.size(), true);
+        vector<bool> good = vector<bool>(filled.size(), true);
         vector<int> bad;
-        for(int i = 0; i < filledx.size(); i++){
-            for(int j = 0; j < filledx[i].size(); j++){
-                getRGB(pixels, width, height, bpp, filledx[i][j], filledy[i][j], r, g, b);
+        for(int i = 0; i < filled.size(); i++){
+            for(int j = 0; j < filled[i].size(); j++){
+                getRGB(pixels, width, height, bpp, filled[i][j].first, filled[i][j].second, r, g, b);
                 if (r < 95 && g < 95 && b < 95){ // black
 
                 } else if (r > 70 && r < 100 && g > 70 && g < 100 && b > 70 && b < 100){ // black
@@ -826,10 +807,10 @@ struct State {
                 }
             }
         }
-        for(int i = 0; i < emptyx.size(); i++){
+        for(int i = 0; i < empty.size(); i++){
             if (!good[i]) continue;
-            for(int j = 0; j < emptyx[i].size(); j++){
-                getRGB(pixels, width, height, bpp, emptyx[i][j], emptyy[i][j], r, g, b);
+            for(int j = 0; j < empty[i].size(); j++){
+                getRGB(pixels, width, height, bpp, empty[i][j].first, empty[i][j].second, r, g, b);
                 if (r > 180 && g > 180 && b > 180){ // white
 
                 } else {
@@ -842,10 +823,11 @@ struct State {
 
         bool hasGood = false;
         for(int i = 0; i < good.size(); i++){
-            if (good[i]) hasGood = true;
+            if (good[i]) {
+                hasGood = true;
+            }
             if (good[i] && suit >= 0 && ranks[i] * 4 + suit != prevCard){
                 int card = ranks[i];
-                if (card == 10 && suit == 2) suit = 3; // wild card is always spades
                 card = card * 4 + suit;
                 return sampleState(card);
             }
