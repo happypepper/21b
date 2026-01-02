@@ -894,6 +894,57 @@ void test3(){
             cout << root->visits << "/" << root->parent->visits << endl;
 }
 
+void test4(){
+    // totals: 10 19 6 17 
+    // numCards: 1 4 1 1 
+    // soft: 0 0 0 0 
+    // left: 0 0 1 0 0 0 0 0 0 0 0 
+    // curCard: 8
+    // cardsLeft: 1, score: 801, streak: 0, justUndid: 0, canUndo: 0, lastPos: 0, nextCard: -1, nextNextCard: -1, hasBusted: 1, curMove: -1, prevCard: 10, undoCounter: 1, numUndo: 5, 
+    // best move: 3
+
+    State * state = new State();
+    state->totals[0] = 10;
+    state->totals[1] = 19;
+    state->totals[2] = 6;
+    state->totals[3] = 17;
+    state->numCards[0] = 1;
+    state->numCards[1] = 4;
+    state->numCards[2] = 1;
+    state->numCards[3] = 2;
+    state->left[0] = 0;
+    state->left[1] = 0;
+    state->left[2] = 0;
+    state->left[3] = 0;
+    state->left[4] = 0;
+    state->left[5] = 0;
+    state->left[6] = 0;
+    state->left[7] = 0;
+    state->left[8] = 0;
+    state->left[9] = 0;
+    state->left[10] = 0;
+    state->curCard = 2;
+    state->cardsLeft = 0;
+    state->score = 801;
+    state->streak = 0;
+    state->nextCard = -1;
+    state->nextNextCard = -1;
+    state->curMove = -1;
+    state->canUndo = true;
+    state->lastPos = 3;
+    state->prevCard = 8;
+    state->undoCounter = 0;
+    state->numUndo = 5;
+    state->justUndid = false;
+
+    Node *root = MCTS(state, 100000);
+    cerr << "done" << endl;
+    cerr << root << endl;
+    root->state->print();
+
+    cout << root->visits << "/" << root->parent->visits << endl;
+}
+
 void simulate(){
     double cumScore = 0;
     int numGames = 0;
@@ -935,6 +986,8 @@ void simulate(){
 
 
 int main(int argc, char **argv) {
+    test4();
+    return 0;
     if (argc >= 2 && string(argv[1]) == "--screenshot-test") {
         string out = (argc >= 3) ? string(argv[2]) : string("reflector.png");
         return screenshotTest(out);
