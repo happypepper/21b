@@ -531,9 +531,12 @@ struct Node {
     }
     Node* getBestEVChild() {
         Node *bestChild = NULL;
-        double bestEV = -10000;
+        double bestEV = -1e300;
         for(auto it=children.begin();it!=children.end();it++){
             Node *child = it->second;
+            if (child == NULL || child->visits <= 0) {
+                continue;
+            }
             double EV = (double)child->reward/(double)child->visits;
             if (EV > bestEV){
                 bestEV = EV;
@@ -678,7 +681,12 @@ Node* MCTS(State * state, int iterations) {
     for(int i=0;i<NUM_THREADS;i++){
         t[i].join();
     }
-    return root->getMostVisitedChild();
+    // With our UCB formula (which includes an extra variance bonus), the most-visited
+    // child can skew toward high-variance actions (e.g., undo). For decision making,
+    // we want the best estimated value.
+    Node *best = root->getBestEVChild();
+    if (best == NULL) best = root->getMostVisitedChild();
+    return best;
 }
 
 int windowX,windowY,windowW,windowH;
@@ -896,11 +904,11 @@ void test3(){
 
 void test4(){
     // totals: 10 19 6 17 
-    // numCards: 1 4 1 1 
+    // numCards: 1 4 1 2 
     // soft: 0 0 0 0 
     // left: 0 0 1 0 0 0 0 0 0 0 0 
-    // curCard: 8
-    // cardsLeft: 1, score: 801, streak: 0, justUndid: 0, canUndo: 0, lastPos: 0, nextCard: -1, nextNextCard: -1, hasBusted: 1, curMove: -1, prevCard: 10, undoCounter: 1, numUndo: 5, 
+    // curCard: 2
+    // cardsLeft: 1, score: 801, streak: 0, justUndid: 0, canUndo: 1, lastPos: 0, nextCard: -1, nextNextCard: -1, hasBusted: 1, curMove: -1, prevCard: 8, undoCounter: 1, numUndo: 5, 
     // best move: 3
 
     State * state = new State();
