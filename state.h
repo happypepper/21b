@@ -153,7 +153,7 @@ struct State {
             }
 
             result->prevCard = -1;
-            if (result->totals[result->lastPos] == 0){ // if we undid a bust
+            if (result->totals[result->lastPos] == 0){ // if we undid a clear (including bust)
                 result->score = result->prevScore;
                 result->totals[result->lastPos] = result->prevTotal;
                 result->soft[result->lastPos] = result->wasSoft;
@@ -163,6 +163,9 @@ struct State {
                 result->totals[result->lastPos]-=result->curCard;
                 result->soft[result->lastPos] = result->wasSoft;
             }
+
+            // Undo should restore whether we were previously busted.
+            result->hasBusted = result->wasBusted;
             
             result->canUndo = false;
             result->undoCounter = 2;
@@ -222,6 +225,7 @@ struct State {
         result->prevNumCards = result->numCards[curMove];
         result->prevTotal = result->totals[curMove];
         result->wasSoft = result->soft[curMove];
+        result->wasBusted = result->hasBusted;
         if (curCard == 0){ // wild card
 
             result->lastPos = curMove;

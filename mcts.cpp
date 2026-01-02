@@ -994,8 +994,13 @@ void simulate(){
 
 
 int main(int argc, char **argv) {
-    test4();
-    return 0;
+    auto hasArg = [&](const std::string &needle) -> bool {
+        for (int i = 1; i < argc; i++) {
+            if (argv[i] != nullptr && std::string(argv[i]) == needle) return true;
+        }
+        return false;
+    };
+
     if (argc >= 2 && string(argv[1]) == "--screenshot-test") {
         string out = (argc >= 3) ? string(argv[2]) : string("reflector.png");
         return screenshotTest(out);
@@ -1006,13 +1011,16 @@ int main(int argc, char **argv) {
         return fromPixelsTest(in);
     }
 
+    if (hasArg("simulate") || hasArg("--simulate")) {
+        simulate();
+        return 0;
+    }
+
     //test3();
     //return 0;
     //readClearable();
     //calcClearable(false);
     //writeClearable();
-    // simulate();
-    // return 0;
     overlay_start();
     overlay_set_text_size(64);
     overlay_set_text_color(1, 0, 0, 1);
