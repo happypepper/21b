@@ -690,8 +690,8 @@ State * sampleFromScreenshot(State * state, int prevCard){
     const std::string target = "Reflector 4";
     while(true){
 
-            overlay_step(0.001);
-            overlay_redraw();
+        overlay_step(0.001);
+        overlay_redraw();
         if (reflectorWindowId == 0) {
             reflectorWindowId = findWindowIdByNameContains(target);
             // Fallback: sometimes the owner/title just contains "Reflector".
@@ -751,7 +751,7 @@ State * sampleFromScreenshot(State * state, int prevCard){
         State::resetCaptureTransform();
 
         State * ret = state->fromPixels((uint8 *)pixelsBGRA.data(), width, height, bpp, prevCard);
-        this_thread::sleep_for(chrono::milliseconds(100));
+        this_thread::sleep_for(chrono::milliseconds(50));
         CGImageRef img2 = captureWindowImage(reflectorWindowId);
         if (img2 == nullptr) {
             reflectorWindowId = 0;
@@ -769,7 +769,7 @@ State * sampleFromScreenshot(State * state, int prevCard){
         }
         CGImageRelease(img2);
         if (ret == NULL){
-            this_thread::sleep_for(chrono::milliseconds(100));
+            this_thread::sleep_for(chrono::milliseconds(50));
         } else {
             if (ret2 == NULL || ret2->curRank != ret->curRank || ret2->curSuit != ret->curSuit){
                 delete ret2;
