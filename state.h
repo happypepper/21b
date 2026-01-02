@@ -77,10 +77,23 @@ struct State {
         nextCard = -1;
         nextNextCard = -1;
         prevCard = -1;
+
+        canUndo = false;
+        justUndid = false;
+        wasSoft = false;
+        wasBusted = false;
+        prevStreak = 0;
+        prevScore = 0;
+        lastPos = -1;
+        prevTotal = 0;
+        prevNumCards = 0;
         undoCounter = 0;
         numUndo = 0;
+
         hasBusted = false;
         curMove = -1;
+        curSuit = 0;
+        curRank = 0;
     }
     long long simpleHash(){
         long long hashcode = 0;
@@ -122,6 +135,7 @@ struct State {
         nextNextCard = state->nextNextCard;
         prevCard = state->prevCard;
         canUndo = state->canUndo;
+        justUndid = state->justUndid;
         wasSoft = state->wasSoft;
         wasBusted = state->wasBusted;
         prevStreak = state->prevStreak;
@@ -133,6 +147,9 @@ struct State {
         numUndo = state->numUndo;
         hasBusted = state->hasBusted;
         curMove = state->curMove;
+
+        curSuit = state->curSuit;
+        curRank = state->curRank;
     }
 
     State * sampleState(int fixedCard = -1) {

@@ -681,11 +681,17 @@ Node* MCTS(State * state, int iterations) {
     for(int i=0;i<NUM_THREADS;i++){
         t[i].join();
     }
-    // With our UCB formula (which includes an extra variance bonus), the most-visited
-    // child can skew toward high-variance actions (e.g., undo). For decision making,
-    // we want the best estimated value.
+
+    // Final-action selection policy (per request):
+    // - If there are 6+ cards left, choose the most-visited child (more robust earlier).
+    // - If there are <6 cards left, choose the best-EV child (optimize endgame decisions).
+    Node *most = root->getMostVisitedChild();
     Node *best = root->getBestEVChild();
-    if (best == NULL) best = root->getMostVisitedChild();
+    if (root->state != NULL && root->state->cardsLeft < 4) {
+        if (best != NULL) return best;
+        return most;
+    }
+    if (most != NULL) return most;
     return best;
 }
 
@@ -1000,6 +1006,11 @@ int main(int argc, char **argv) {
         }
         return false;
     };
+
+    if (hasArg("--test4")) {
+        test4();
+        return 0;
+    }
 
     if (argc >= 2 && string(argv[1]) == "--screenshot-test") {
         string out = (argc >= 3) ? string(argv[2]) : string("reflector.png");
