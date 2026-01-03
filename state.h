@@ -562,6 +562,15 @@ struct State {
             if (totals[i] == 0) numSpacesNow++;
         }
 
+        auto isDuplicatePileState = [&](int i) -> bool {
+            for (int j = 0; j < i; j++) {
+                if (totals[i] == totals[j] && numCards[i] == numCards[j] && soft[i] == soft[j]) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         // Mirror the legality rules in getAvailableStates().
         auto isPileChoiceLegal = [&](int pileIndex, int cardVal) -> bool {
             if (pileIndex < 0 || pileIndex >= 4) return false;
@@ -570,7 +579,9 @@ struct State {
             return true;
         };
 
-        auto countUndoAlternatives = [&]() -> int {
+        auto collectUndoAlternatives = [&](int outMoves[4]) -> int {
+            // Mirrors getAvailableStates(): undo is legal iff there exists at least one
+            // legal pile choice for playing prevCard AFTER undo (excluding lastPos).
             if (!canUndo || lastPos < 0 || prevCard < 0) return 0;
 
             // Replicate the "numSpacesAfterUndo" reasoning from getAvailableStates().
@@ -591,93 +602,132 @@ struct State {
                 }
             }
 
-            int numUndoSlots = 0;
+            int count = 0;
             for (int i = 0; i < 4; i++) {
                 if (nextCard != -1 && i == lastPos && undoCounter == 2) continue;
+                if (isDuplicatePileState(i)) continue;
+                if (i == lastPos) continue;
 
                 const bool wouldBust = (totals[i] + prevCard > 21);
                 if (wouldBust && numSpacesAfterUndo > 0) {
                     continue;
                 }
-                if (i != lastPos && totals[i] == prevTotal && numCards[i] == prevNumCards && soft[i] == wasSoft) {
+                if (totals[i] == prevTotal && numCards[i] == prevNumCards && soft[i] == wasSoft) {
                     continue;
                 }
-                numUndoSlots++;
+                outMoves[count++] = i;
             }
-            return numUndoSlots;
+            return count;
         };
 
-        // Consider undo as a candidate action when it's actually legal.
-        const int undoOptions = countUndoAlternatives();
+        int undoMoves[4];
+        const int undoOptions = collectUndoAlternatives(undoMoves);
 
-        auto evalPileChoice = [&](int chosenPile) -> double {
-            // Build a tiny "post-move" view of the 4 piles.
+        auto applyCardToPiles = [&](int cardVal,
+                                    int chosenPile,
+                                    int t[4],
+                                    int n[4],
+                                    bool s[4],
+                                    int streakIn,
+                                    int &immediatePoints,
+                                    int &streakOut,
+                                    bool &causedBust) {
+            immediatePoints = 0;
+            streakOut = 0;
+            causedBust = false;
+
+            if (cardVal == 0) {
+                immediatePoints += streakBonus(streakIn);
+                immediatePoints += 20;
+                if (n[chosenPile] >= 4) immediatePoints += 60;
+                if (t[chosenPile] == 11 || t[chosenPile] == 1) immediatePoints += 40;
+                streakOut = min(streakIn + 1, 5);
+
+                t[chosenPile] = 0;
+                n[chosenPile] = 0;
+                s[chosenPile] = false;
+                return;
+            }
+
+            if (cardVal <= 0) {
+                streakOut = 0;
+                return;
+            }
+
+            const int newTotal = t[chosenPile] + cardVal;
+            const int newNum = n[chosenPile] + 1;
+            bool newSoft = s[chosenPile];
+            if (newTotal <= 11 && cardVal == 1) {
+                newSoft = true;
+            }
+            if (newTotal > 11) {
+                newSoft = false;
+            }
+
+            bool cleared = false;
+            if (newTotal == 21) {
+                cleared = true;
+            } else if (newTotal == 11 && newSoft) {
+                cleared = true;
+            } else if (newNum >= 5 && newTotal <= 21) {
+                cleared = true;
+            } else if (newTotal > 21) {
+                causedBust = true;
+                cleared = true;
+            }
+
+            if (cleared && !causedBust) {
+                immediatePoints += streakBonus(streakIn);
+                if (newNum >= 5) immediatePoints += 60;
+                if (newTotal == 21 || (newTotal == 11 && newSoft)) immediatePoints += 40;
+                streakOut = min(streakIn + 1, 5);
+            } else {
+                streakOut = 0;
+            }
+
+            if (cleared) {
+                t[chosenPile] = 0;
+                n[chosenPile] = 0;
+                s[chosenPile] = false;
+            } else {
+                t[chosenPile] = newTotal;
+                n[chosenPile] = newNum;
+                s[chosenPile] = newSoft;
+            }
+        };
+
+        auto isLegalGivenPiles = [&](const int t[4], int cardVal, int pileIndex) -> bool {
+            if (pileIndex < 0 || pileIndex >= 4) return false;
+            int spaces = 0;
+            for (int k = 0; k < 4; k++) {
+                if (t[k] == 0) spaces++;
+            }
+            if (cardVal > 0 && t[pileIndex] + cardVal > 21 && spaces > 0) return false;
+            return true;
+        };
+
+        auto evalChoiceFrom = [&](int cardVal,
+                                  int chosenPile,
+                                  const int baseTotals[4],
+                                  const int baseNumCards[4],
+                                  const bool baseSoft[4],
+                                  int streakIn,
+                                  bool hasBustedIn,
+                                  int cardsLeftIn,
+                                  const int leftCounts[11]) -> double {
             int t[4];
             int n[4];
             bool s[4];
             for (int k = 0; k < 4; k++) {
-                t[k] = totals[k];
-                n[k] = numCards[k];
-                s[k] = soft[k];
+                t[k] = baseTotals[k];
+                n[k] = baseNumCards[k];
+                s[k] = baseSoft[k];
             }
 
             int immediatePoints = 0;
             int nextStreak = 0;
             bool causedBust = false;
-
-            if (currentCard == 0) {
-                // Wildcard: always clears the chosen pile.
-                immediatePoints += streakBonus(streak);
-                immediatePoints += 20;
-                if (n[chosenPile] >= 4) immediatePoints += 60;
-                if (t[chosenPile] == 11 || t[chosenPile] == 1) immediatePoints += 40;
-                nextStreak = min(streak + 1, 5);
-
-                t[chosenPile] = 0;
-                n[chosenPile] = 0;
-                s[chosenPile] = false;
-            } else {
-                const int newTotal = t[chosenPile] + currentCard;
-                const int newNum = n[chosenPile] + 1;
-                bool newSoft = s[chosenPile];
-                if (newTotal <= 11 && currentCard == 1) {
-                    newSoft = true;
-                }
-                if (newTotal > 11) {
-                    newSoft = false;
-                }
-
-                bool cleared = false;
-                if (newTotal == 21) {
-                    cleared = true;
-                } else if (newTotal == 11 && newSoft) {
-                    cleared = true;
-                } else if (newNum >= 5 && newTotal <= 21) {
-                    cleared = true;
-                } else if (newTotal > 21) {
-                    causedBust = true;
-                    cleared = true;
-                }
-
-                if (cleared && !causedBust) {
-                    immediatePoints += streakBonus(streak);
-                    if (newNum >= 5) immediatePoints += 60;
-                    if (newTotal == 21 || (newTotal == 11 && newSoft)) immediatePoints += 40;
-                    nextStreak = min(streak + 1, 5);
-                } else {
-                    nextStreak = 0;
-                }
-
-                if (cleared) {
-                    t[chosenPile] = 0;
-                    n[chosenPile] = 0;
-                    s[chosenPile] = false;
-                } else {
-                    t[chosenPile] = newTotal;
-                    n[chosenPile] = newNum;
-                    s[chosenPile] = newSoft;
-                }
-            }
+            applyCardToPiles(cardVal, chosenPile, t, n, s, streakIn, immediatePoints, nextStreak, causedBust);
 
             int numSpacesAfter = 0;
             for (int k = 0; k < 4; k++) {
@@ -690,7 +740,6 @@ struct State {
             int clearOuts = 0;
             for (int v = 1; v <= 10; v++) {
                 for (int k = 0; k < 4; k++) {
-                    // We only care about clears; those are never busts, so the empty-pile bust restriction doesn't matter here.
                     if (wouldClearWith(t[k], n[k], s[k], v)) {
                         goodVal[v] = true;
                         break;
@@ -698,11 +747,10 @@ struct State {
                 }
                 if (goodVal[v]) {
                     distinctClearVals++;
-                    clearOuts += left[v];
+                    clearOuts += leftCounts[v];
                 }
             }
 
-            // Penalize creating very "awkward" high totals (low flexibility) when they didn't immediately clear.
             double dangerPenalty = 0.0;
             for (int k = 0; k < 4; k++) {
                 if (t[k] == 20) dangerPenalty += 18.0;
@@ -710,15 +758,12 @@ struct State {
                 else if (t[k] == 18) dangerPenalty += 4.0;
             }
 
-            // Bust is permanent (kills end bonuses), so strongly discourage the first bust.
             double bustPenalty = 0.0;
             if (causedBust) {
-                bustPenalty = hasBusted ? 12.0 : 70.0;
-                // Endgame: avoid busting even more.
-                if (cardsLeft <= 12) bustPenalty += 20.0;
+                bustPenalty = hasBustedIn ? 12.0 : 70.0;
+                if (cardsLeftIn <= 12) bustPenalty += 20.0;
             }
 
-            // Weights tuned for rollout quality (fast + reasonably predictive).
             double eval = 0.0;
             eval += (double)immediatePoints;
             eval += 2.6 * (double)clearOuts;
@@ -726,32 +771,167 @@ struct State {
             eval += (numSpacesAfter > 0 ? 8.0 : -8.0);
             eval -= dangerPenalty;
             eval -= bustPenalty;
-
-            // Prefer preserving/increasing streak potential (helps align rollouts with true scoring).
             eval += 10.0 * (double)nextStreak;
             return eval;
+        };
+
+        auto evalPileChoice = [&](int chosenPile) -> double {
+            return evalChoiceFrom(currentCard, chosenPile, totals, numCards, soft, streak, hasBusted, cardsLeft, left);
         };
 
         auto evalUndoChoice = [&]() -> double {
             if (undoOptions <= 0) return -1e300;
 
+            // Build the deterministic post-undo state (as sampleState() would do).
+            int tU[4];
+            int nU[4];
+            bool sU[4];
+            for (int k = 0; k < 4; k++) {
+                tU[k] = totals[k];
+                nU[k] = numCards[k];
+                sU[k] = soft[k];
+            }
+
+            int leftU[11];
+            for (int i = 0; i < 11; i++) {
+                leftU[i] = left[i];
+            }
+            int cardsLeftU = cardsLeft;
+            const int knownNext = currentCard;
+            const int cardAfterUndo = prevCard;
+
+            // Undo makes the current card the known next card again.
+            if (knownNext != -1) {
+                leftU[knownNext]++;
+                cardsLeftU++;
+            }
+
+            // Undo restores pile/score/streak/bust state.
+            int scoreU = score;
+            if (totals[lastPos] == 0) {
+                scoreU = prevScore;
+                tU[lastPos] = prevTotal;
+                sU[lastPos] = wasSoft;
+                nU[lastPos] = prevNumCards;
+            } else {
+                nU[lastPos]--;
+                tU[lastPos] -= cardAfterUndo;
+                sU[lastPos] = wasSoft;
+            }
+            scoreU -= 1;
+            if (scoreU < 0) scoreU = 0;
+
+            const int streakU = prevStreak;
+            const bool hasBustedU = wasBusted;
+
+            // Base immediate score delta from undo (captures undoing big clears).
+            const double undoImmediateDelta = (double)(scoreU - score);
+
             // Undo is especially valuable if it removes the first-ever bust.
-            double eval = 0.0;
+            double baseBonus = 0.0;
             if (hasBusted && !wasBusted) {
-                eval += 85.0;
+                baseBonus += 85.0;
             }
             if (prevStreak > streak) {
-                eval += 10.0 * (double)(prevStreak - streak);
+                baseBonus += 10.0 * (double)(prevStreak - streak);
             }
 
-            // Undo costs points and a tempo.
-            eval -= 8.0;
+            // Value undo by best 2-card sequence using a conservative model:
+            // - immediate scoring from placing prevCard
+            // - then immediate scoring from placing the known next card
+            // - strong bust penalties (especially for the first bust)
+            const double step2Weight = 0.85;
+            double bestSeq = -1e300;
+            for (int idx = 0; idx < undoOptions; idx++) {
+                const int firstPile = undoMoves[idx];
+
+                int t1[4];
+                int n1[4];
+                bool s1[4];
+                for (int k = 0; k < 4; k++) {
+                    t1[k] = tU[k];
+                    n1[k] = nU[k];
+                    s1[k] = sU[k];
+                }
+
+                int immediate1 = 0;
+                int streak1 = 0;
+                bool bust1 = false;
+                applyCardToPiles(cardAfterUndo, firstPile, t1, n1, s1, streakU, immediate1, streak1, bust1);
+                const bool hasBusted1 = hasBustedU || bust1;
+
+                double bustPenalty1 = 0.0;
+                if (bust1) {
+                    bustPenalty1 = hasBustedU ? 12.0 : 70.0;
+                    if (cardsLeftU <= 12) bustPenalty1 += 20.0;
+                }
+
+                double bestImmediate2 = 0.0;
+                double bestBustPenalty2 = 0.0;
+                int streak2Best = 0;
+                if (knownNext != -1) {
+                    bool found2 = false;
+                    bestImmediate2 = -1e300;
+                    bestBustPenalty2 = 0.0;
+                    streak2Best = 0;
+                    for (int k = 0; k < 4; k++) {
+                        if (!isLegalGivenPiles(t1, knownNext, k)) continue;
+
+                        int t2[4];
+                        int n2[4];
+                        bool s2[4];
+                        for (int j = 0; j < 4; j++) {
+                            t2[j] = t1[j];
+                            n2[j] = n1[j];
+                            s2[j] = s1[j];
+                        }
+
+                        int immediate2 = 0;
+                        int streak2 = 0;
+                        bool bust2 = false;
+                        applyCardToPiles(knownNext, k, t2, n2, s2, streak1, immediate2, streak2, bust2);
+
+                        double bustPenalty2 = 0.0;
+                        if (bust2) {
+                            bustPenalty2 = hasBusted1 ? 12.0 : 70.0;
+                            if ((cardsLeftU - 1) <= 12) bustPenalty2 += 20.0;
+                        }
+
+                        const double v2 = (double)immediate2 - bustPenalty2 + 6.0 * (double)streak2;
+                        if (!found2 || v2 > bestImmediate2) {
+                            found2 = true;
+                            bestImmediate2 = v2;
+                            bestBustPenalty2 = bustPenalty2;
+                            streak2Best = streak2;
+                        }
+                    }
+                    if (!found2) {
+                        bestImmediate2 = 0.0;
+                        bestBustPenalty2 = 0.0;
+                        streak2Best = 0;
+                    }
+                }
+
+                // Small preference for having at least one empty pile after step 1.
+                int spacesAfter1 = 0;
+                for (int k = 0; k < 4; k++) {
+                    if (t1[k] == 0) spacesAfter1++;
+                }
+
+                const double seq = baseBonus + undoImmediateDelta
+                    + (double)immediate1 - bustPenalty1 + 6.0 * (double)streak1
+                    + step2Weight * (bestImmediate2)
+                    + (spacesAfter1 > 0 ? 3.0 : -3.0);
+
+                if (seq > bestSeq) bestSeq = seq;
+            }
+
             // Avoid pathological undoing very late unless it's fixing a bust.
             if (cardsLeft <= 6 && !(hasBusted && !wasBusted)) {
-                eval -= 25.0;
+                bestSeq -= 25.0;
             }
 
-            return eval;
+            return bestSeq;
         };
 
         int bestMove = -1;

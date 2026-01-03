@@ -11,3 +11,11 @@ undo fix + best EV when low cards
 
 undo legality fix:
 1000: 836.78 / 1903
+
+update smart move:
+1000: 841 / 1000
+10000: 870 / 1000
+
+update smart move (beter undos):
+1000: 849.081 / 1000
+10000: 883 / 1000
