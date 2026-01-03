@@ -982,6 +982,7 @@ void simulate(){
             }
             Node *root = MCTS(state, 1000);
             state = root->state;
+
             State * sampled = state->sampleState();
 
             state = sampled;
@@ -995,6 +996,9 @@ void simulate(){
         cout << "num games: " << numGames << endl;
         delete initState;
         delete state;
+        if (numGames >= 1000){
+            break;
+        }
     }
 }
 
